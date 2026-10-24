@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FIFA 14 Legacy</title>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
+<script async src="https://cdn.jsdelivr.net/gh/jpd002/Play-@latest/build/play.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.3/dist/peerjs.min.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#000}
+#view{position:relative;background:#000;width:100vw;height:100vh}
+#view canvas{width:100%;height:100%;display:block;object-fit:contain}
+.bar{position:absolute;left:10px;bottom:10px;display:flex;gap:6px;z-index:10;flex-wrap:wrap}
+.bar.top{top:10px;bottom:auto}
+.btn{border:0;background:#111;color:#fff;padding:8px 12px;border-radius:20px;font:700 11px system-ui;cursor:pointer;border:1px solid #222}
+.btn:active{background:#fff;color:#000}
+input{background:#111;color:#fff;border:1px solid #222;padding:8px;border-radius:20px;font:11px monospace}
+#log{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#0a0a0a;border:1px solid #222;border-radius:16px;padding:14px 16px;min-width:280px;display:none;z-index:20;font:700 11px system-ui;color:#fff}
+#log b{font-size:13px}#bar{height:4px;background:#222;border-radius:10px;margin:8px 0;overflow:hidden}#fill{height:100%;width:0%;background:#fff;transition:width .2s}
+#meta{display:flex;justify-content:space-between;color:#888;font-weight:500}
+</style>
+</head>
+<body>
+<div id="view">
+<canvas id="screen" width="3840" height="2160"></canvas>
+<div id="log"><b id="l1">boot</b><div id="bar"><div id="fill"></div></div><div id="meta"><span id="l2">0%</span><span id="l3">~0s</span></div></div>
+<div class="bar top"><input id="peerIn" placeholder="id"><input id="peerId" readonly style="width:120px"></div>
+<div class="bar">
+<input type="file" id="file" accept=".iso,.bin,.zip" hidden>
+<button class="btn" id="pick">iso</button><button class="btn" id="boot">boot</button><button class="btn" id="fs">fs</button>
+<button class="btn" id="pad">pad</button><button class="btn" id="audio">audio</button><button class="btn" id="local">2P</button>
+<button class="btn" id="host">host</button><button class="btn" id="join">join</button><button class="btn" id="copy">copy</button>
+<button class="btn" id="bios">bios</button><button class="btn" id="wipe">wipe</button>
+</div></div>
+<script>
+const $=q=>document.querySelector(q),view=$("#view"),canvas=$("#screen");
+const log=$("#log"),l1=$("#l1"),l2=$("#l2"),l3=$("#l3"),fill=$("#fill");
+let t0=0,running=false;
+function show(m,p){log.style.display="block";p=Math.max(1,Math.min(100,p));l1.textContent=m;l2.textContent=p+"%";fill.style.width=p+"%";let dt=(Date.now()-t0)/1000;let e=p<99?Math.max(0,Math.round(dt/p*(100-p))):0;l3.textContent=p>=100?"pronto":`~${e}s • ${dt.toFixed(1)}s`;}
+function hide(){log.style.display="none"}
+$("#fs").onclick=()=>{!document.fullscreenElement?view.requestFullscreen():document.exitFullscreen()};
+addEventListener("keydown",e=>{if(e.key==="F1"){e.preventDefault();view.requestFullscreen()}if(e.key==="Escape"&&document.fullscreenElement)document.exitFullscreen()});
+let audioCtx=null;async function ensureAudio(){if(audioCtx)return;audioCtx=window.Play?.GetAudioContext?.()||new AudioContext({sampleRate:48000});if(audioCtx.state==="suspended")await audioCtx.resume()}
+$("#audio").onclick=ensureAudio;
+let pads=[],p1k={x:0,y:0,a:0,b:0,c:0},p2k={x:0,y:0,a:0,b:0,c:0};
+addEventListener("keydown",e=>{let k=e.key.toLowerCase();if(k==="w")p1k.y=-1;if(k==="s")p1k.y=1;if(k==="a")p1k.x=-1;if(k==="d")p1k.x=1;if(k==="j")p1k.a=1;if(k==="k")p1k.b=1;if(k==="l")p1k.c=1;if(k==="arrowup")p2k.y=-1;if(k==="arrowdown")p2k.y=1;if(k==="arrowleft")p2k.x=-1;if(k==="arrowright")p2k.x=1;if(k==="1"||k==="numpad1")p2k.a=1;if(k==="2"||k==="numpad2")p2k.b=1;if(k==="3"||k==="numpad3")p2k.c=1});
+addEventListener("keyup",e=>{let k=e.key.toLowerCase();if(k==="w"||k==="s")p1k.y=0;if(k==="a"||k==="d")p1k.x=0;if(k==="j")p1k.a=0;if(k==="k")p1k.b=0;if(k==="l")p1k.c=0;if(k==="arrowup"||k==="arrowdown")p2k.y=0;if(k==="arrowleft"||k==="arrowright")p2k.x=0;if(k==="1"||k==="numpad1")p2k.a=0;if(k==="2"||k==="numpad2")p2k.b=0;if(k==="3"||k==="numpad3")p2k.c=0});
+addEventListener("gamepadconnected",e=>{if(pads.find(p=>p.index===e.gamepad.index))return;pads.push({index:e.gamepad.index,gp:e.gamepad})});
+addEventListener("gamepaddisconnected",e=>{pads=pads.filter(p=>p.index!==e.gamepad.index)});
+$("#pad").onclick=()=>navigator.getGamepads();
+let peer=null,conn=null,myId="fifa14-"+Math.random().toString(36).slice(2,6);
+function initPeer(){if(peer)return;peer=new Peer(myId);peer.on("open",id=>$("#peerId").value=id);peer.on("connection",c=>{conn=c;c.on("data",d=>{if(d.t==="pad"&&window.Play?.SetPad)Play.SetPad(1,d.x,d.y,d.a,d.b,d.c)})})}
+$("#host").onclick=()=>initPeer();$("#join").onclick=()=>{let t=$("#peerIn").value.trim();if(!t)return;initPeer();conn=peer.connect(t)};$("#copy").onclick=()=>navigator.clipboard.writeText($("#peerId").value||myId);$("#local").onclick=()=>navigator.getGamepads();
+async function getBytes(n){try{let r=await navigator.storage.getDirectory();let h=await r.getFileHandle(n);let f=await h.getFile();return new Uint8Array(await f.arrayBuffer())}catch{return null}}
+async function putBytes(n,u8){let r=await navigator.storage.getDirectory();let h=await r.getFileHandle(n,{create:true});let w=await h.createWritable();await w.write(u8);await w.close()}
+async function fetchBios(){let b=await getBytes("openps2bios.bin");if(b)return b;for(let u of["https://cdn.jsdelivr.net/gh/pc-remote/openps2bios@latest/bin/openps2bios.bin","https://raw.githubusercontent.com/pc-remote/openps2bios/main/bin/openps2bios.bin"]){try{let r=await fetch(u);let buf=new Uint8Array(await r.arrayBuffer());if(buf.length>1e5){await putBytes("openps2bios.bin",buf);return buf}}catch{}}return null}
+$("#bios").onclick=fetchBios;
+$("#pick").onclick=()=>$("#file").click();
+$("#file").onchange=async e=>{
+  let file=e.target.files[0];if(!file){e.target.value="";return;}
+  t0=Date.now();show("lendo "+file.name,10);
+  try{
+    if(file.name.toLowerCase().endsWith(".zip")){
+      let buf=new Uint8Array(await file.arrayBuffer());show("extraindo zip",40);
+      fflate.unzip(buf,async(err,files)=>{
+        if(err){show("zip inválido",100);setTimeout(hide,1200);return;}
+        let k=Object.keys(files).find(x=>/\.iso$|\.bin$/i.test(x));
+        if(!k){show("sem iso no zip",100);setTimeout(hide,1500);return;}
+        show("salvando iso",80);await putBytes("fifa14.iso",files[k]);show("iso pronto",100);setTimeout(hide,800);
+      });
+    }else{show("salvando iso",60);await putBytes("fifa14.iso",new Uint8Array(await file.arrayBuffer()));show("iso pronto",100);setTimeout(hide,800);}
+  }catch{show("erro ao ler",100);setTimeout(hide,1000);}
+  e.target.value="";
+};
+let Play=null,ready=false;setInterval(()=>{if(!ready&&window.Play){Play=window.Play;ready=true}},200);
+$("#boot").onclick=async()=>{
+  t0=Date.now();show("checando bios",5);
+  let bios=await fetchBios();
+  if(!bios){show("baixando bios",20);bios=await fetchBios();}
+  show("checando iso",35);
+  let iso=await getBytes("fifa14.iso");
+  if(!iso||!ready){show("falta iso / aguarde play.js",100);setTimeout(hide,1500);return;}
+  show("iniciando audio",50);await ensureAudio();
+  show("init ps2",70);Play.SetCanvas(canvas);Play.SetBios(bios);
+  Play.SetOption("spu2","on");Play.SetOption("multitap","on");Play.SetOption("pads","4");
+  Play.SetOption("threads","10");Play.SetOption("vu1","thread");
+  Play.SetOption("renderer","blackwell");Play.SetResolution(1920,1080);Play.SetUpscale(3840,2160);
+  show("bootando fifa 14",90);Play.Boot(iso);
+  show("jogável",100);setTimeout(hide,700);
+  if(!running){running=true;loop();}
+};
+function getInputs(){let raw=navigator.getGamepads();pads.forEach(p=>{let g=raw?.[p.index];if(g)p.gp=g});let p1={x:0,y:0,a:0,b:0,c:0},p2={x:0,y:0,a:0,b:0,c:0};if(pads[0]?.gp){let g=pads[0].gp;p1.x=g.axes[0]||0;p1.y=g.axes[1]||0;p1.a=g.buttons[0]?.pressed;p1.b=g.buttons[2]?.pressed;p1.c=g.buttons[1]?.pressed}else p1=p1k;if(pads[1]?.gp){let g=pads[1].gp;p2.x=g.axes[0]||0;p2.y=g.axes[1]||0;p2.a=g.buttons[0]?.pressed;p2.b=g.buttons[2]?.pressed;p2.c=g.buttons[1]?.pressed}else p2=p2k;if(pads.length===1)p2=p2k;return{p1,p2}}
+function loop(){requestAnimationFrame(loop);let{p1,p2}=getInputs();let dz=v=>Math.abs(v)<.2?0:v;if(Play?.SetPad){Play.SetPad(0,dz(p1.x),dz(p1.y),p1.a,p1.b,p1.c);Play.SetPad(1,dz(p2.x),dz(p2.y),p2.a,p2.b,p2.c)}if(conn?.open)conn.send({t:"pad",x:p1.x,y:p1.y,a:p1.a,b:p1.b,c:p1.c});if(Play?.Tick)Play.Tick();if(Play?.Render)Play.Render()}
+$("#wipe").onclick=async()=>{try{let r=await navigator.storage.getDirectory();for(let n of["fifa14.iso","openps2bios.bin"])try{await r.removeEntry(n)}catch{}}catch{}};
+</script></body></html>
